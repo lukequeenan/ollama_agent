@@ -1,0 +1,97 @@
+{
+  "name": "ollama-agent",
+  "displayName": "Ollama Chat",
+  "description": "A VS Code extension for conversational AI powered by Ollama",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": "^1.100.0"
+  },
+  "categories": [
+    "AI",
+    "Chat"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./dist/extension.js",
+  "icon": "media/icon.png",
+  "contributes": {
+    "commands": [
+      {
+        "command": "ollama-chat.clearHistory",
+        "title": "Clear Chat History",
+        "category": "Ollama Chat"
+      },
+      {
+        "command": "ollama-chat.selectModel",
+        "title": "Select Ollama Model",
+        "category": "Ollama Chat"
+      },
+      {
+        "command": "ollama-chat.openPanel",
+        "title": "Open Chat Panel",
+        "category": "Ollama Chat"
+      }
+    ],
+    "viewsContainers": {
+      "panel": [
+        {
+          "id": "ollama-chat-container",
+          "title": "Ollama Chat",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "ollama-chat-container": [
+        {
+          "type": "webview",
+          "id": "ollama-chat-panel",
+          "name": "Chat",
+          "when": "true"
+        }
+      ]
+    },
+    "configuration": {
+      "type": "object",
+      "title": "Ollama Chat",
+      "properties": {
+        "ollama.endpoint": {
+          "type": "string",
+          "default": "",
+          "description": "Ollama server endpoint (leave empty to auto-detect). Examples: http://localhost:11434 or http://host.docker.internal:11434 or http://192.168.x.x:11434"
+        },
+        "ollama.model": {
+          "type": "string",
+          "default": "qwen3.5:4b",
+          "description": "Default Ollama model to use for chat"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run esbuild-base -- --minify",
+    "esbuild-base": "esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --external:axios --format=cjs --platform=node",
+    "esbuild": "npm run esbuild-base -- --sourcemap",
+    "esbuild-watch": "npm run esbuild-base -- --sourcemap --watch",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile && npm run lint",
+    "lint": "eslint src --ext ts",
+    "test": "node ./out/test/runTest.js",
+    "package": "npm run vscode:prepublish"
+  },
+  "dependencies": {
+    "axios": "^1.7.2"
+  },
+  "devDependencies": {
+    "@types/node": "^20.12.0",
+    "@types/vscode": "^1.100.0",
+    "@typescript-eslint/eslint-plugin": "^8.20.0",
+    "@typescript-eslint/parser": "^8.20.0",
+    "@vscode/test-electron": "^2.5.0",
+    "esbuild": "^0.27.4",
+    "eslint": "^9.0.0",
+    "typescript": "^5.6.3"
+  }
+}

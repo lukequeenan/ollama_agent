@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ollama Chat</title>
+    <link rel="stylesheet" href="chat.css">
+</head>
+<body>
+    <div id="chat-container" class="chat-container">
+        <!-- Header -->
+        <div class="chat-header">
+            <h2>Ollama Chat</h2>
+            <button id="clear-btn" class="header-btn" title="Clear conversation">
+                <span>🗑️</span>
+            </button>
+        </div>
+
+        <!-- Messages Area -->
+        <div id="messages-area" class="messages-area">
+            <div class="welcome-message">
+                <h3>Welcome to Ollama Chat</h3>
+                <p>Start a conversation with your local AI model</p>
+                <div class="connection-status">
+                    <span id="status-indicator" class="status-dot disconnected"></span>
+                    <span id="status-text">Connecting...</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Input Area -->
+        <div class="input-area">
+            <div id="context-badge" class="context-badge" style="display: none;">
+                📄 Selection included
+            </div>
+            <div class="input-wrapper">
+                <textarea
+                    id="input-field"
+                    class="input-field"
+                    placeholder="Type your message..."
+                    disabled
+                ></textarea>
+                <button id="send-btn" class="send-btn" title="Send message" disabled>
+                    <span>→</span>
+                </button>
+            </div>
+            <div id="error-message" class="error-message" style="display: none;"></div>
+        </div>
+    </div>
+
+    <script src="chat.js"></script>
+</body>
+</html>

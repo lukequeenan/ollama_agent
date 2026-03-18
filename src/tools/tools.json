@@ -1,0 +1,26 @@
+{
+  "tools": [
+    {
+      "name": "read_file",
+      "description": "Read the contents of a file in the workspace. Use this to examine file contents when answering questions about the code.",
+      "usage": "read_file(path=\"src/utils/helpers.ts\")\nOptionally specify line ranges: read_file(path=\"src/utils/helpers.ts\", startLine=10, endLine=50)",
+      "parameters": {
+        "path": {
+          "type": "string",
+          "description": "Relative path to the file from workspace root (e.g., src/utils/helpers.ts, README.md)",
+          "required": true
+        },
+        "startLine": {
+          "type": "number",
+          "description": "Optional: 1-based starting line number (inclusive)",
+          "required": false
+        },
+        "endLine": {
+          "type": "number",
+          "description": "Optional: 1-based ending line number (inclusive). Only used if startLine is also specified.",
+          "required": false
+        }
+      }
+    }
+  ]
+}

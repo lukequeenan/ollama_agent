@@ -10,6 +10,9 @@ let conversationHistory = [];
 let isLoading = false;
 let connectionState = 'disconnected'; // 'connected', 'disconnected', 'error'
 let lastSelectedText = '';
+let fileMentionActive = false;
+let fileMentionSelectedIndex = -1;
+let currentFileSearchResults = [];
 
 // DOM Elements
 const messagesArea = document.getElementById('messages-area');
@@ -20,6 +23,8 @@ const statusIndicator = document.getElementById('status-indicator');
 const statusText = document.getElementById('status-text');
 const contextBadge = document.getElementById('context-badge');
 const errorMessage = document.getElementById('error-message');
+const fileMentionDropdown = document.getElementById('file-mention-dropdown');
+const fileMentionList = document.getElementById('file-mention-list');
 
 /**
  * Initialize the chat interface
@@ -37,9 +42,49 @@ function setupEventListeners() {
     clearBtn.addEventListener('click', clearHistory);
     inputField.addEventListener('keydown', (e) => {
         if (e.key === 'Enter' && !e.shiftKey && !isLoading) {
+            // If dropdown is open, select the highlighted item
+            if (fileMentionActive && fileMentionSelectedIndex >= 0) {
+                e.preventDefault();
+                selectFileMention(fileMentionSelectedIndex);
+                return;
+            }
+            // Otherwise, send the message
+            if (!fileMentionActive) {
+                e.preventDefault();
+                sendMessage();
+            }
+        } else if (e.key === 'Escape' && fileMentionActive) {
+            hideFileMentionDropdown();
+        } else if (e.key === 'ArrowUp' && fileMentionActive) {
             e.preventDefault();
-            sendMessage();
+            fileMentionSelectedIndex = Math.max(0, fileMentionSelectedIndex - 1);
+            updateFileMentionHighlight();
+        } else if (e.key === 'ArrowDown' && fileMentionActive) {
+            e.preventDefault();
+            fileMentionSelectedIndex = Math.min(currentFileSearchResults.length - 1, fileMentionSelectedIndex + 1);
+            updateFileMentionHighlight();
         }
+    });
+
+    // Detect @mentions in input field
+    inputField.addEventListener('input', (e) => {
+        const text = inputField.value;
+        const caretPos = inputField.selectionStart;
+
+        // Look for @mention pattern
+        const beforeCaret = text.substring(0, caretPos);
+        const lastAtIndex = beforeCaret.lastIndexOf('@');
+
+        if (lastAtIndex >= 0) {
+            const afterAt = text.substring(lastAtIndex + 1, caretPos);
+            // Check if there's only word characters after the @
+            if (/^[\w.\-/]*$/.test(afterAt) && !afterAt.includes(' ')) {
+                showFileMentionDropdown(afterAt);
+                return;
+            }
+        }
+
+        hideFileMentionDropdown();
     });
 
     // Listen for messages from the extension
@@ -88,6 +133,12 @@ function handleExtensionMessage(message) {
             break;
         case 'selectedText':
             handleSelectedText(message.payload);
+            break;
+        case 'fileSearchResults':
+            handleFileSearchResults(message.payload);
+            break;
+        case 'setInputValue':
+            handleSetInputValue(message.payload);
             break;
     }
 }
@@ -188,6 +239,19 @@ function handleSelectedText(payload) {
         contextBadge.style.display = 'block';
     } else {
         contextBadge.style.display = 'none';
+    }
+}
+
+/**
+ * Handle set input value from extension
+ */
+function handleSetInputValue(payload) {
+    const { text, focusInput } = payload;
+    inputField.value = text;
+    if (focusInput) {
+        inputField.focus();
+        // Move cursor to end
+        inputField.selectionStart = inputField.selectionEnd = text.length;
     }
 }
 
@@ -339,6 +403,107 @@ function showError(message) {
  */
 function clearError() {
     errorMessage.style.display = 'none';
+}
+
+/**
+ * Handle file search results from extension
+ */
+function handleFileSearchResults(payload) {
+    const { results } = payload;
+    currentFileSearchResults = results;
+    fileMentionSelectedIndex = 0;
+    renderFileMentionDropdown();
+}
+
+/**
+ * Show file mention dropdown
+ */
+function showFileMentionDropdown(query) {
+    fileMentionActive = true;
+    fileMentionSelectedIndex = 0;
+    postMessage({
+        type: 'searchFiles',
+        payload: { query }
+    });
+}
+
+/**
+ * Hide file mention dropdown
+ */
+function hideFileMentionDropdown() {
+    fileMentionActive = false;
+    fileMentionSelectedIndex = -1;
+    fileMentionDropdown.style.display = 'none';
+    currentFileSearchResults = [];
+}
+
+/**
+ * Render file mention dropdown
+ */
+function renderFileMentionDropdown() {
+    if (!fileMentionActive || currentFileSearchResults.length === 0) {
+        fileMentionDropdown.style.display = 'none';
+        return;
+    }
+
+    fileMentionList.innerHTML = '';
+    currentFileSearchResults.forEach((file, index) => {
+        const div = document.createElement('div');
+        div.className = 'file-mention-item';
+        if (file.isOpen) div.classList.add('open');
+        if (index === fileMentionSelectedIndex) div.classList.add('selected');
+
+        div.textContent = file.path;
+        div.addEventListener('click', () => selectFileMention(index));
+
+        fileMentionList.appendChild(div);
+    });
+
+    fileMentionDropdown.style.display = 'block';
+}
+
+/**
+ * Update which file is highlighted in dropdown
+ */
+function updateFileMentionHighlight() {
+    const items = fileMentionList.querySelectorAll('.file-mention-item');
+    items.forEach((item, index) => {
+        if (index === fileMentionSelectedIndex) {
+            item.classList.add('selected');
+            item.scrollIntoView({block: 'nearest'});
+        } else {
+            item.classList.remove('selected');
+        }
+    });
+}
+
+/**
+ * Select a file from the mention dropdown
+ */
+function selectFileMention(index) {
+    const file = currentFileSearchResults[index];
+    if (!file) return;
+
+    // Get the current input text
+    const text = inputField.value;
+    const caretPos = inputField.selectionStart;
+
+    // Find the @mention position
+    const beforeCaret = text.substring(0, caretPos);
+    const lastAtIndex = beforeCaret.lastIndexOf('@');
+
+    if (lastAtIndex >= 0) {
+        // Replace the @mention with @filepath
+        const before = text.substring(0, lastAtIndex);
+        const after = text.substring(caretPos);
+        const newText = before + '@' + file.path + ' ' + after;
+
+        inputField.value = newText;
+        inputField.selectionStart = inputField.selectionEnd = before.length + file.path.length + 2;
+        inputField.focus();
+    }
+
+    hideFileMentionDropdown();
 }
 
 // Initialize on page load

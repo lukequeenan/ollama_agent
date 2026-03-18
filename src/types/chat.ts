@@ -2,6 +2,12 @@
  * Chat message types and configuration
  */
 
+export interface FileReference {
+  path: string;
+  language: string;
+  isOpen: boolean;
+}
+
 export interface ChatMessage {
   id: string;
   role: 'user' | 'assistant';
@@ -10,11 +16,17 @@ export interface ChatMessage {
   context?: {
     selectedText?: string;
   };
+  fileReferences?: FileReference[];
+  fileContents?: Array<{
+    path: string;
+    language: string;
+    content: string;
+  }>;
 }
 
 export interface OllamaConfig {
   endpoint: string;
-  model: string;
+  model?: string;
 }
 
 export interface ChatState {
@@ -52,7 +64,12 @@ export interface OllamaGenerateResponse {
  * Message types for webview <-> extension communication
  */
 
-export type WebviewMessage = UserMessageEvent | ClearHistoryEvent | SelectModelEvent;
+export type WebviewMessage =
+  | UserMessageEvent
+  | ClearHistoryEvent
+  | SelectModelEvent
+  | SearchFilesEvent
+  | WebviewReadyEvent;
 
 export interface UserMessageEvent {
   type: 'userMessage';
@@ -68,6 +85,20 @@ export interface ClearHistoryEvent {
 
 export interface SelectModelEvent {
   type: 'selectModel';
+  payload?: {
+    model?: string;
+  };
+}
+
+export interface SearchFilesEvent {
+  type: 'searchFiles' | 'fileSearch';
+  payload: {
+    query: string;
+  };
+}
+
+export interface WebviewReadyEvent {
+  type: 'webviewReady';
 }
 
 export type ExtensionMessage =
@@ -75,11 +106,17 @@ export type ExtensionMessage =
   | ResponseChunkEvent
   | LoadingStateEvent
   | ModelSelectedEvent
-  | ErrorEvent;
+  | ErrorEvent
+  | ConnectionStateEvent
+  | HistoryClearedEvent
+  | FileSearchResultsEvent
+  | SetInputValueEvent;
 
 export interface AddMessageEvent {
   type: 'addMessage';
-  payload: ChatMessage;
+  payload: {
+    message: ChatMessage;
+  };
 }
 
 export interface ResponseChunkEvent {
@@ -109,5 +146,34 @@ export interface ErrorEvent {
   payload: {
     message: string;
     code?: string;
+  };
+}
+
+export interface ConnectionStateEvent {
+  type: 'connectionState';
+  payload: {
+    state: 'connected' | 'disconnected' | 'error';
+    models?: string[];
+  };
+}
+
+export interface HistoryClearedEvent {
+  type: 'historyCleared';
+}
+
+export interface FileSearchResultsEvent {
+  type: 'fileSearchResults';
+  payload: {
+    query: string;
+    results: FileReference[];
+    total: number;
+  };
+}
+
+export interface SetInputValueEvent {
+  type: 'setInputValue';
+  payload: {
+    text: string;
+    focusInput: boolean;
   };
 }

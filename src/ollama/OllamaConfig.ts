@@ -56,14 +56,15 @@ export class OllamaConfigManager {
    */
   static getConfig(): OllamaConfig {
     const config = vscode.workspace.getConfiguration('ollama');
-    const configured = config.get('endpoint');
+    const configured = config.get<string>('endpoint');
+    const model = config.get<string>('model');
 
     // Use configured endpoint if set, otherwise detect
-    let endpoint = configured || this.detectEndpoint();
+    const endpoint = configured || this.detectEndpoint();
 
     return {
       endpoint,
-      model: config.get('model') || 'qwen3.5:4b',
+      model
     };
   }
 
@@ -92,5 +93,16 @@ export class OllamaConfigManager {
       endpoint: config.get('endpoint'),
       model: config.get('model'),
     };
+  }
+
+  /**
+   * Get the workspace folder path(s)
+   */
+  static getWorkspaceFolders(): string[] {
+    const folders = vscode.workspace.workspaceFolders;
+    if (!folders) {
+      return [];
+    }
+    return folders.map(folder => folder.uri.fsPath);
   }
 }

@@ -33,6 +33,9 @@ export function activate(context: vscode.ExtensionContext) {
     }),
     vscode.commands.registerCommand('ollama-chat.openPanel', () => {
       commands.openPanel();
+    }),
+    vscode.commands.registerCommand('ollama-chat.sendSelectionToChat', () => {
+      commands.sendSelectionToChat(chatViewProvider);
     })
   );
 

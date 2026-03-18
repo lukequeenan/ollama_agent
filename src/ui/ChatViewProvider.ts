@@ -6,7 +6,9 @@ import * as vscode from 'vscode';
 import { ChatStateManager } from '../state/ChatStateManager';
 import { OllamaClient } from '../ollama/OllamaClient';
 import { OllamaConfigManager } from '../ollama/OllamaConfig';
-import { WebviewMessage, ExtensionMessage } from '../types/chat';
+import { WebviewMessage, ExtensionMessage, FileReference } from '../types/chat';
+import { WorkspaceFileProvider } from '../workspace/WorkspaceFileProvider';
+import { FileReader } from '../workspace/FileReader';
 
 export class ChatViewProvider implements vscode.WebviewViewProvider {
   public static readonly viewType = 'ollama-chat-panel';
@@ -123,7 +125,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         this.handleClearHistory();
         break;
       case 'selectModel':
-        await this.handleSelectModel((message.payload as { model?: string }).model);
+        await this.handleSelectModel((message.payload as { model?: string } | undefined)?.model);
+        break;
+      case 'searchFiles':
+      case 'fileSearch':
+        await this.handleSearchFiles((message.payload as { query: string }).query);
         break;
       default:
         console.warn('Unknown message type:', message);
@@ -149,10 +155,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     }
 
     try {
-      // Add user message to state
-      const userMessage = this.stateManager.addMessage('user', payload.message, {
+      // Parse and extract file references from message
+      const { cleanMessage, fileReferences, fileContents } = await this.extractFileReferences(payload.message);
+
+      // Add user message to state with file references and contents
+      const userMessage = this.stateManager.addMessage('user', cleanMessage, {
         selectedText: payload.selectedText,
-      });
+      }, fileReferences.length > 0 ? fileReferences : undefined, fileContents.length > 0 ? fileContents : undefined);
 
       // Send user message to webview
       this.sendMessage({
@@ -170,14 +179,14 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       // Build prompt with conversation history
       const prompt = this.stateManager.getConversationPrompt();
       const model = this.stateManager.getState().currentModel;
-      ChatViewProvider.log('Using model:', model);
+      ChatViewProvider.log('Using model:', model, 'File references:', fileReferences.length);
 
       // Get response from Ollama
       let fullResponse = '';
       const assistantMessage = this.stateManager.addMessage('assistant', '', {});
 
       try {
-        fullResponse = await this.client.generateResponse(
+        fullResponse = await this.client.generateResponseWithTools(
           prompt,
           model,
           (chunk: string) => {
@@ -191,13 +200,19 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                 chunk,
               },
             });
-          }
+          },
+          fileReferences.length > 0 ? fileReferences : undefined
         );
         ChatViewProvider.log('Response complete');
-      } catch (streamError) {
+      } catch (_streamError) {
         // If streaming fails, retry without streaming
         ChatViewProvider.log('Streaming failed, retrying...');
-        fullResponse = await this.client.generateResponse(prompt, model);
+        fullResponse = await this.client.generateResponseWithTools(
+          prompt,
+          model,
+          undefined,
+          fileReferences.length > 0 ? fileReferences : undefined
+        );
         this.stateManager!.updateMessage(assistantMessage.id, fullResponse);
       }
 
@@ -283,7 +298,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     const config = OllamaConfigManager.getConfig();
 
     if (this.stateManager) {
-      this.stateManager.setCurrentModel(config.model);
+      if (config.model) {
+        this.stateManager.setCurrentModel(config.model);
+      }
     }
 
     if (this.client) {
@@ -294,12 +311,133 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   }
 
   /**
+   * Extract and validate file references from message
+   * Looks for @filepath patterns and removes them from the message
+   */
+  private async extractFileReferences(message: string): Promise<{
+    cleanMessage: string;
+    fileReferences: FileReference[];
+    fileContents: Array<{ path: string; language: string; content: string }>;
+  }> {
+    const fileReferences: FileReference[] = [];
+    const fileContentsArray: Array<{ path: string; language: string; content: string }> = [];
+    const displayMessage = message; // Keep the original message with @filename visible to user
+
+    // Match @filepath patterns
+    const fileRefRegex = /@([\w.\-/]+)/g;
+    let match;
+
+    while ((match = fileRefRegex.exec(message)) !== null) {
+      const filePath = match[1];
+
+      // Validate file path (must be within workspace and must exist)
+      if (WorkspaceFileProvider.isValidFilePath(filePath)) {
+        // Get file metadata
+        const openFiles = WorkspaceFileProvider.getOpenFiles();
+        const isOpen = openFiles.some(f => f.path === filePath);
+
+        // Infer language from file extension
+        const extension = filePath.split('.').pop() || 'plaintext';
+        const languageMap: {[key: string]: string} = {
+          'ts': 'typescript',
+          'tsx': 'typescriptreact',
+          'js': 'javascript',
+          'jsx': 'javascriptreact',
+          'py': 'python',
+          'java': 'java',
+          'go': 'go',
+          'rs': 'rust',
+          'md': 'markdown',
+          'html': 'html',
+          'css': 'css',
+          'json': 'json',
+        };
+        const language = languageMap[extension] || 'plaintext';
+
+        fileReferences.push({
+          path: filePath,
+          language,
+          isOpen,
+        });
+
+        // Read file contents
+        const fileResult = await FileReader.readFile(filePath);
+        if (fileResult.success && fileResult.content) {
+          fileContentsArray.push({
+            path: filePath,
+            language,
+            content: fileResult.content,
+          });
+        } else {
+          ChatViewProvider.log('Failed to read file:', filePath, fileResult.error);
+        }
+      } else {
+        ChatViewProvider.log('Invalid file path reference:', filePath);
+      }
+    }
+
+    return { cleanMessage: displayMessage, fileReferences, fileContents: fileContentsArray };
+  }
+
+  /**
+   * Handle file search request from webview
+   */
+  private async handleSearchFiles(query: string) {
+    try {
+      ChatViewProvider.log('Searching files with query:', query);
+
+      let results;
+      if (query.trim() === '') {
+        // Empty query - return open files
+        results = WorkspaceFileProvider.getOpenFiles();
+      } else {
+        // Search for files matching the query
+        results = await WorkspaceFileProvider.searchFiles(query);
+      }
+
+      // Limit results to first 50
+      const limited = results.slice(0, 50);
+      if (limited.length < results.length) {
+        ChatViewProvider.log(`File search returned ${results.length} results, showing first ${limited.length}`);
+      }
+
+      this.sendMessage({
+        type: 'fileSearchResults',
+        payload: {
+          query,
+          results: limited,
+          total: results.length
+        },
+      });
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Error searching files';
+      ChatViewProvider.log('File search error:', errorMessage);
+      this.sendMessage({
+        type: 'error',
+        payload: { message: `Failed to search files: ${errorMessage}` },
+      });
+    }
+  }
+
+  /**
    * Send message to webview
    */
   private sendMessage(message: ExtensionMessage) {
     if (this.view) {
       this.view.webview.postMessage(message);
     }
+  }
+
+  /**
+   * Set input value in the chat webview
+   * @param text The text to set in the input field
+   * @param focusInput Whether to focus the input field
+   */
+  public setInputValue(text: string, focusInput: boolean = true) {
+    this.sendMessage({
+      type: 'setInputValue',
+      payload: { text, focusInput },
+    });
   }
 
   /**
@@ -495,6 +633,53 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             color: var(--vscode-foreground);
         }
 
+        /* File mention autocomplete dropdown */
+        .file-mention-dropdown {
+            position: absolute;
+            bottom: 70px;
+            left: 12px;
+            right: 12px;
+            max-height: 200px;
+            background-color: var(--vscode-input-background);
+            border: 1px solid var(--vscode-input-border);
+            border-radius: 3px;
+            z-index: 1000;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+            overflow-y: auto;
+        }
+
+        .file-mention-list {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .file-mention-item {
+            padding: 6px 12px;
+            cursor: pointer;
+            font-size: 13px;
+            color: var(--vscode-foreground);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .file-mention-item:hover,
+        .file-mention-item.selected {
+            background-color: var(--vscode-list-hoverBackground);
+        }
+
+        .file-mention-item.open::before {
+            content: '🔓 ';
+            font-size: 11px;
+        }
+
+        .file-mention-item.open {
+            font-weight: 500;
+        }
+
         .input-area {
             padding: 12px;
             border-top: 1px solid var(--vscode-panel-border);
@@ -502,6 +687,16 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             display: flex;
             flex-direction: column;
             gap: 8px;
+            position: relative;
+        }
+
+        .context-badge {
+            font-size: 11px;
+            color: var(--vscode-descriptionForeground);
+            padding: 4px 8px;
+            background-color: var(--vscode-panel-background);
+            border-radius: 3px;
+            width: fit-content;
         }
 
         .input-wrapper {
@@ -566,6 +761,38 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             border-radius: 3px;
         }
 
+        #file-mention-list {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .file-mention-item {
+            padding: 8px 12px;
+            cursor: pointer;
+            border-bottom: 1px solid #333;
+            font-size: 13px;
+            color: #e0e0e0;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            transition: background-color 0.15s;
+        }
+
+        .file-mention-item:hover {
+            background-color: #333;
+        }
+
+        .file-mention-item.selected {
+            background-color: #0e639c;
+            color: #fff;
+        }
+
+        .file-mention-item.open::after {
+            content: ' (open)';
+            font-size: 11px;
+            opacity: 0.7;
+        }
+
         @keyframes fadeIn {
             from {
                 opacity: 0;
@@ -599,6 +826,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         </div>
 
         <div class="input-area">
+            <div id="context-badge" class="context-badge" style="display: none;">
+                📄 Selection included
+            </div>
+            <!-- File mention autocomplete -->
+            <div id="file-mention-dropdown" class="file-mention-dropdown" style="display: none;">
+                <div id="file-mention-list" class="file-mention-list"></div>
+            </div>
             <div class="model-selector" id="model-selector" style="display: none;">
                 <label for="model-select" style="font-weight: 500;">Model:</label>
                 <select id="model-select" title="Select AI model">
@@ -606,12 +840,14 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                 </select>
             </div>
             <div class="input-wrapper">
-                <textarea
-                    id="input-field"
-                    class="input-field"
-                    placeholder="Type your message..."
-                    disabled
-                ></textarea>
+                <div style="position: relative; flex-grow: 1;">
+                    <textarea
+                        id="input-field"
+                        class="input-field"
+                        placeholder="Type your message... Use @filename to reference files"
+                        disabled
+                    ></textarea>
+                </div>
                 <button id="send-btn" class="send-btn" title="Send message" disabled>
                     →
                 </button>
@@ -626,6 +862,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         let conversationHistory = [];
         let isLoading = false;
         let connectionState = 'disconnected';
+        let lastSelectedText = '';
+        let fileMentionActive = false;
+        let fileMentionSelectedIndex = -1;
+        let currentFileSearchResults = [];
 
         const messagesArea = document.getElementById('messages-area');
         const inputField = document.getElementById('input-field');
@@ -634,8 +874,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         const statusIndicator = document.getElementById('status-indicator');
         const statusText = document.getElementById('status-text');
         const errorMessage = document.getElementById('error-message');
+        const contextBadge = document.getElementById('context-badge');
         const modelSelector = document.getElementById('model-selector');
         const modelSelect = document.getElementById('model-select');
+        const fileMentionDropdown = document.getElementById('file-mention-dropdown');
+        const fileMentionList = document.getElementById('file-mention-list');
 
         function initialize() {
             setupEventListeners();
@@ -651,11 +894,45 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                     payload: { model: e.target.value }
                 });
             });
+
             inputField.addEventListener('keydown', (e) => {
                 if (e.key === 'Enter' && !e.shiftKey && !isLoading) {
+                    if (fileMentionActive && fileMentionSelectedIndex >= 0) {
+                        e.preventDefault();
+                        selectFileMention(fileMentionSelectedIndex);
+                        return;
+                    }
+                    if (!fileMentionActive) {
+                        e.preventDefault();
+                        sendMessage();
+                    }
+                } else if (e.key === 'Escape' && fileMentionActive) {
+                    hideFileMentionDropdown();
+                } else if (e.key === 'ArrowUp' && fileMentionActive) {
                     e.preventDefault();
-                    sendMessage();
+                    fileMentionSelectedIndex = Math.max(0, fileMentionSelectedIndex - 1);
+                    updateFileMentionHighlight();
+                } else if (e.key === 'ArrowDown' && fileMentionActive) {
+                    e.preventDefault();
+                    fileMentionSelectedIndex = Math.min(currentFileSearchResults.length - 1, fileMentionSelectedIndex + 1);
+                    updateFileMentionHighlight();
                 }
+            });
+
+            inputField.addEventListener('input', (e) => {
+                const text = inputField.value;
+                const caretPos = inputField.selectionStart;
+                const beforeCaret = text.substring(0, caretPos);
+                const lastAtIndex = beforeCaret.lastIndexOf('@');
+
+                if (lastAtIndex >= 0) {
+                    const afterAt = text.substring(lastAtIndex + 1, caretPos);
+                    if (/^[\\w./-]*$/.test(afterAt) && !afterAt.includes(' ')) {
+                        showFileMentionDropdown(afterAt);
+                        return;
+                    }
+                }
+                hideFileMentionDropdown();
             });
 
             window.addEventListener('message', (event) => {
@@ -686,6 +963,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                     break;
                 case 'historyCleared':
                     clearMessagesDisplay();
+                    break;
+                case 'fileSearchResults':
+                    handleFileSearchResults(message.payload);
+                    break;
+                case 'setInputValue':
+                    handleSetInputValue(message.payload);
                     break;
             }
         }
@@ -744,11 +1027,17 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             };
             statusText.textContent = map[payload.state] || payload.state;
 
-            // Update model selector
             if (payload.models && payload.models.length > 0) {
                 modelSelect.innerHTML = payload.models
-                    .map(m => '<option value=\"' + m + '\">' + m + '</option>')
+                    .map(m => '<option value="' + m + '">' + m + '</option>')
                     .join('');
+                // Set the current model if provided
+                if (payload.currentModel) {
+                    modelSelect.value = payload.currentModel;
+                } else if (payload.models.length > 0) {
+                    // Default to first model if no current model is set
+                    modelSelect.value = payload.models[0];
+                }
                 modelSelector.style.display = 'flex';
             } else {
                 modelSelector.style.display = 'none';
@@ -804,6 +1093,95 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
         function scrollToBottom() {
             setTimeout(() => { messagesArea.scrollTop = messagesArea.scrollHeight; }, 0);
+        }
+
+        // File mention functions
+        function showFileMentionDropdown(query) {
+            fileMentionActive = true;
+            fileMentionSelectedIndex = 0;
+            vscode.postMessage({
+                type: 'searchFiles',
+                payload: { query }
+            });
+        }
+
+        function hideFileMentionDropdown() {
+            fileMentionActive = false;
+            fileMentionSelectedIndex = -1;
+            fileMentionDropdown.style.display = 'none';
+            currentFileSearchResults = [];
+        }
+
+        function handleFileSearchResults(payload) {
+            const { results } = payload;
+            currentFileSearchResults = results;
+            fileMentionSelectedIndex = 0;
+            renderFileMentionDropdown();
+        }
+
+        function renderFileMentionDropdown() {
+            if (!fileMentionActive || currentFileSearchResults.length === 0) {
+                fileMentionDropdown.style.display = 'none';
+                return;
+            }
+
+            fileMentionList.innerHTML = '';
+            currentFileSearchResults.forEach((file, index) => {
+                const div = document.createElement('div');
+                div.className = 'file-mention-item';
+                if (file.isOpen) div.classList.add('open');
+                if (index === fileMentionSelectedIndex) div.classList.add('selected');
+
+                div.textContent = file.path;
+                div.addEventListener('click', () => selectFileMention(index));
+
+                fileMentionList.appendChild(div);
+            });
+
+            fileMentionDropdown.style.display = 'block';
+        }
+
+        function updateFileMentionHighlight() {
+            const items = fileMentionList.querySelectorAll('.file-mention-item');
+            items.forEach((item, index) => {
+                if (index === fileMentionSelectedIndex) {
+                    item.classList.add('selected');
+                    item.scrollIntoView({block: 'nearest'});
+                } else {
+                    item.classList.remove('selected');
+                }
+            });
+        }
+
+        function selectFileMention(index) {
+            const file = currentFileSearchResults[index];
+            if (!file) return;
+
+            const text = inputField.value;
+            const caretPos = inputField.selectionStart;
+            const beforeCaret = text.substring(0, caretPos);
+            const lastAtIndex = beforeCaret.lastIndexOf('@');
+
+            if (lastAtIndex >= 0) {
+                const before = text.substring(0, lastAtIndex);
+                const after = text.substring(caretPos);
+                const newText = before + '@' + file.path + ' ' + after;
+
+                inputField.value = newText;
+                inputField.selectionStart = inputField.selectionEnd = before.length + file.path.length + 2;
+                inputField.focus();
+            }
+
+            hideFileMentionDropdown();
+        }
+
+        function handleSetInputValue(payload) {
+            const { text, focusInput } = payload;
+            inputField.value = text;
+            if (focusInput) {
+                inputField.focus();
+                inputField.selectionStart = inputField.selectionEnd = text.length;
+            }
         }
 
         initialize();

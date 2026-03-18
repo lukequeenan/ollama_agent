@@ -33,11 +33,15 @@
             <div id="context-badge" class="context-badge" style="display: none;">
                 📄 Selection included
             </div>
+            <!-- File mention autocomplete -->
+            <div id="file-mention-dropdown" class="file-mention-dropdown" style="display: none;">
+                <div id="file-mention-list" class="file-mention-list"></div>
+            </div>
             <div class="input-wrapper">
                 <textarea
                     id="input-field"
                     class="input-field"
-                    placeholder="Type your message..."
+                    placeholder="Type your message... Use @filename to reference files"
                     disabled
                 ></textarea>
                 <button id="send-btn" class="send-btn" title="Send message" disabled>

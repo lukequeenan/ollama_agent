@@ -209,6 +209,7 @@ body {
     display: flex;
     flex-direction: column;
     gap: 8px;
+    position: relative;
 }
 
 .context-badge {
@@ -306,6 +307,53 @@ body {
 
 .messages-area::-webkit-scrollbar-thumb:hover {
     background: var(--vscode-scrollbarSlider-hoverBackground);
+}
+
+/* File mention autocomplete dropdown */
+.file-mention-dropdown {
+    position: absolute;
+    bottom: 70px;
+    left: 12px;
+    right: 12px;
+    max-height: 200px;
+    background-color: var(--vscode-input-background);
+    border: 1px solid var(--vscode-input-border);
+    border-radius: 3px;
+    z-index: 1000;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+    overflow-y: auto;
+}
+
+.file-mention-list {
+    display: flex;
+    flex-direction: column;
+}
+
+.file-mention-item {
+    padding: 6px 12px;
+    cursor: pointer;
+    font-size: 13px;
+    color: var(--vscode-foreground);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.file-mention-item:hover,
+.file-mention-item.selected {
+    background-color: var(--vscode-list-hoverBackground);
+}
+
+.file-mention-item.open::before {
+    content: '🔓 ';
+    font-size: 11px;
+}
+
+.file-mention-item.open {
+    font-weight: 500;
 }
 
 /* Responsive adjustments */

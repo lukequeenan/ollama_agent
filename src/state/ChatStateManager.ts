@@ -2,7 +2,7 @@
  * Chat state management - maintains in-memory message history
  */
 
-import { ChatMessage, ChatState, OllamaConfig } from '../types/chat';
+import { ChatMessage, ChatState, OllamaConfig, FileReference } from '../types/chat';
 import * as crypto from 'crypto';
 
 export class ChatStateManager {
@@ -12,7 +12,7 @@ export class ChatStateManager {
     this.state = {
       messages: [],
       loading: false,
-      currentModel: config.model,
+      currentModel: config.model || 'llama2',
       endpoint: config.endpoint,
     };
   }
@@ -23,7 +23,9 @@ export class ChatStateManager {
   addMessage(
     role: 'user' | 'assistant',
     content: string,
-    context?: { selectedText?: string }
+    context?: { selectedText?: string },
+    fileReferences?: FileReference[],
+    fileContents?: Array<{ path: string; language: string; content: string }>
   ): ChatMessage {
     const message: ChatMessage = {
       id: crypto.randomUUID(),
@@ -31,6 +33,8 @@ export class ChatStateManager {
       content,
       timestamp: Date.now(),
       context,
+      fileReferences,
+      fileContents,
     };
 
     this.state.messages.push(message);
@@ -51,7 +55,17 @@ export class ChatStateManager {
     return this.state.messages
       .map((msg) => {
         const prefix = msg.role === 'user' ? 'User: ' : 'Assistant: ';
-        return prefix + msg.content;
+        let content = prefix + msg.content;
+
+        // For user messages with file contents, append the file contents to the prompt
+        if (msg.role === 'user' && msg.fileContents && msg.fileContents.length > 0) {
+          const fileContent = msg.fileContents
+            .map(fc => `\n\`\`\`${fc.language}\n// File: ${fc.path}\n${fc.content}\n\`\`\``)
+            .join('\n');
+          content += fileContent;
+        }
+
+        return content;
       })
       .join('\n\n');
   }

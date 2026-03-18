@@ -31,8 +31,22 @@
         "command": "ollama-chat.openPanel",
         "title": "Open Chat Panel",
         "category": "Ollama Chat"
+      },
+      {
+        "command": "ollama-chat.sendSelectionToChat",
+        "title": "Send Selection to Ollama Chat",
+        "category": "Ollama Chat"
       }
     ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "ollama-chat.sendSelectionToChat",
+          "group": "1_modification",
+          "when": "editorHasSelection"
+        }
+      ]
+    },
     "viewsContainers": {
       "panel": [
         {
@@ -60,11 +74,6 @@
           "type": "string",
           "default": "",
           "description": "Ollama server endpoint (leave empty to auto-detect). Examples: http://localhost:11434 or http://host.docker.internal:11434 or http://192.168.x.x:11434"
-        },
-        "ollama.model": {
-          "type": "string",
-          "default": "qwen3.5:4b",
-          "description": "Default Ollama model to use for chat"
         }
       }
     }
